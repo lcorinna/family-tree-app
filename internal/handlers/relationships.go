@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"family-tree-app/internal/auth" // Добавлен импорт auth
 	"family-tree-app/internal/database"
 	"family-tree-app/internal/models"
 	"net/http"
@@ -11,8 +12,10 @@ import (
 
 // CreateRelationship
 func CreateRelationship(w http.ResponseWriter, r *http.Request) {
-	var rel models.Relationship
+	// Достаем userID из контекста (так же, как в people.go)
+	userID := r.Context().Value(auth.UserIDKey).(int)
 
+	var rel models.Relationship
 	err := json.NewDecoder(r.Body).Decode(&rel)
 	if err != nil {
 		http.Error(w, "Неверный формат JSON", http.StatusBadRequest)
@@ -24,8 +27,9 @@ func CreateRelationship(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `INSERT INTO relationships (from_person_id, to_person_id, type, description) VALUES (?, ?, ?, ?)`
-	result, err := database.DB.Exec(query, rel.FromPersonID, rel.ToPersonID, rel.Type, rel.Description)
+	// Добавили user_id
+	query := `INSERT INTO relationships (user_id, from_person_id, to_person_id, type, description) VALUES (?, ?, ?, ?, ?)`
+	result, err := database.DB.Exec(query, userID, rel.FromPersonID, rel.ToPersonID, rel.Type, rel.Description)
 	if err != nil {
 		http.Error(w, "Ошибка записи в БД: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -41,14 +45,16 @@ func CreateRelationship(w http.ResponseWriter, r *http.Request) {
 
 // GetAllRelationships
 func GetAllRelationships(w http.ResponseWriter, r *http.Request) {
-	rows, err := database.DB.Query("SELECT id, from_person_id, to_person_id, type, description FROM relationships")
+	userID := r.Context().Value(auth.UserIDKey).(int)
+
+	// Фильтр WHERE user_id = ?
+	rows, err := database.DB.Query("SELECT id, from_person_id, to_person_id, type, description FROM relationships WHERE user_id = ?", userID)
 	if err != nil {
 		http.Error(w, "Ошибка чтения БД: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	// ИСПРАВЛЕНИЕ: Инициализируем как пустой слайс
 	relationships := []models.Relationship{}
 
 	for rows.Next() {
@@ -63,13 +69,21 @@ func GetAllRelationships(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(relationships)
 }
 
-// DeleteRelationship удаляет связь по ID
+// DeleteRelationship
 func DeleteRelationship(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(auth.UserIDKey).(int)
 	idStr := chi.URLParam(r, "id")
 
-	_, err := database.DB.Exec("DELETE FROM relationships WHERE id=?", idStr)
+	// Удаляем только если принадлежит юзеру
+	result, err := database.DB.Exec("DELETE FROM relationships WHERE id=? AND user_id=?", idStr, userID)
 	if err != nil {
 		http.Error(w, "Ошибка удаления связи: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Связь не найдена или нет прав", http.StatusNotFound)
 		return
 	}
 
