@@ -31,6 +31,7 @@ func createTables() {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		email TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- <--- НОВОЕ ПОЛЕ
 		is_verified BOOLEAN DEFAULT 0,
 		link_to_person_id INTEGER,
 		FOREIGN KEY(link_to_person_id) REFERENCES people(id)
@@ -39,23 +40,30 @@ func createTables() {
 	peopleTable := `
 	CREATE TABLE IF NOT EXISTS people (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER, 
 		first_name TEXT NOT NULL,
+		middle_name TEXT,
 		last_name TEXT NOT NULL,
 		birth_date TEXT,
 		death_date TEXT,
 		gender TEXT,
-		photo_url TEXT
+		photo_url TEXT,
+		position_x REAL DEFAULT 0,
+		position_y REAL DEFAULT 0,
+		FOREIGN KEY(user_id) REFERENCES users(id)
 	);`
 
 	relationshipsTable := `
 	CREATE TABLE IF NOT EXISTS relationships (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER,
 		from_person_id INTEGER NOT NULL,
 		to_person_id INTEGER NOT NULL,
 		type TEXT NOT NULL,
 		description TEXT,
 		FOREIGN KEY(from_person_id) REFERENCES people(id),
-		FOREIGN KEY(to_person_id) REFERENCES people(id)
+		FOREIGN KEY(to_person_id) REFERENCES people(id),
+		FOREIGN KEY(user_id) REFERENCES users(id)
 	);`
 
 	mustExec(usersTable)

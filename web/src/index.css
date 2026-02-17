@@ -1,0 +1,23 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif; /* Применяем новый шрифт */
+  background-color: #f8f9fa; /* Светло-серый фон (не режет глаза) */
+  color: #333;
+}
+
+/* Делаем скроллбар чуть симпатичнее (для Chrome/Safari) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
