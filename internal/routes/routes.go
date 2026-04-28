@@ -31,10 +31,13 @@ func NewRouter() http.Handler {
 		// --- ПУБЛИЧНЫЕ ---
 		r.Post("/register", handlers.Register)
 		r.Post("/login", handlers.Login)
+		r.Post("/logout", handlers.Logout)
 
 		// --- ЗАЩИЩЕННЫЕ ---
 		r.Group(func(r chi.Router) {
 			r.Use(auth.AuthMiddleware)
+
+			r.Get("/me", handlers.Me)
 
 			// Люди
 			r.Post("/people", handlers.CreatePerson)
@@ -45,6 +48,7 @@ func NewRouter() http.Handler {
 			// Связи
 			r.Post("/relationships", handlers.CreateRelationship)
 			r.Get("/relationships", handlers.GetAllRelationships)
+			r.Put("/relationships/{id}", handlers.UpdateRelationship)
 			r.Delete("/relationships/{id}", handlers.DeleteRelationship)
 			
 			r.Put("/people/position", handlers.SaveNodePosition)

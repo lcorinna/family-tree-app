@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { Modal, Select, Button, Group, Stack, Autocomplete, Text } from '@mantine/core';
+import React, { useEffect, useRef, useState } from 'react';
+import { Modal, Select, Button, Group, Stack, Autocomplete, Text, Textarea } from '@mantine/core';
 import { createRelationship, fetchPeople } from '../api';
 
 export function CreateRelationshipModal({ opened, onClose, onRelationshipCreated }) {
   const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const submittingRef = useRef(false);
 
   const [fromId, setFromId] = useState(null);
   const [toId, setToId] = useState(null);
 
   // Меняем значение по умолчанию на русское
   const [type, setType] = useState('');
+  const [description, setDescription] = useState('');
 
   useEffect(() => {
     if (opened) {
@@ -24,37 +27,52 @@ export function CreateRelationshipModal({ opened, onClose, onRelationshipCreated
     }
   }, [opened]);
 
+  const handleClose = () => {
+    setFromId(null);
+    setToId(null);
+    setType('');
+    setDescription('');
+    setError(null);
+    onClose();
+  };
+
   const handleSubmit = async () => {
     if (!fromId || !toId) return;
     if (fromId === toId) {
-      alert('Нельзя связать человека с самим собой!');
+      setError('Нельзя связать человека с самим собой!');
       return;
     }
 
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
+    setError(null);
     try {
       await createRelationship({
         from_person_id: parseInt(fromId),
         to_person_id: parseInt(toId),
         type: type,
-        description: '',
+        description: description,
       });
 
       onRelationshipCreated();
-      onClose();
-      setFromId(null);
-      setToId(null);
-      setType('Родитель');
-    } catch (error) {
-      alert('Ошибка: ' + error.message);
+      handleClose();
+    } catch (err) {
+      setError(err.response?.data || err.message || 'Ошибка при создании связи');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Создать связь" centered>
+    <Modal opened={opened} onClose={handleClose} title="Создать связь" centered>
       <Stack>
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
         <Select
           label="Кто (От кого идет стрелка)"
           placeholder="Выберите человека"
@@ -100,8 +118,17 @@ export function CreateRelationshipModal({ opened, onClose, onRelationshipCreated
           </Text>
         )}
 
+        <Textarea
+          label="Описание (необязательно)"
+          placeholder="Например: поженились в 1985 году"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          autosize
+          minRows={2}
+        />
+
         <Group justify="flex-end" mt="md">
-          <Button variant="default" onClick={onClose}>
+          <Button variant="default" onClick={handleClose}>
             Отмена
           </Button>
           <Button onClick={handleSubmit} loading={loading}>

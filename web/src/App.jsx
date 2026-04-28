@@ -1,16 +1,17 @@
-import { useState } from 'react';
-import { Container, Title, Button, Group, TextInput, ActionIcon, Tooltip } from '@mantine/core'; // Убрали FileButton
+import { useState, useEffect } from 'react';
+import { Container, Title, Button, Group, TextInput, ActionIcon, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconSearch, IconLogout } from '@tabler/icons-react'; // Убрали IconUpload
+import { IconSearch, IconLogout } from '@tabler/icons-react';
 import { FamilyGraph } from './components/FamilyGraph';
 import { CreatePersonModal } from './components/CreatePersonModal';
 import { CreateRelationshipModal } from './components/CreateRelationshipModal';
 import { EditPersonModal } from './components/EditPersonModal';
 import { AuthForm } from './components/AuthForm';
-import { fetchPeople } from './api';
+import { checkAuth, logout } from './api';
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [personModalOpened, { open: openPersonModal, close: closePersonModal }] =
     useDisclosure(false);
@@ -20,31 +21,41 @@ function App() {
   const [version, setVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
 
-  if (!token) {
-    return <AuthForm onLoginSuccess={() => setToken(localStorage.getItem('token'))} />;
+  useEffect(() => {
+    // Проверяем наличие активной сессии при загрузке страницы
+    checkAuth()
+      .then(() => setIsAuthenticated(true))
+      .catch(() => setIsAuthenticated(false))
+      .finally(() => setAuthChecked(true));
+
+    // Слушаем событие от response interceptor (истёкшая/невалидная сессия)
+    const handleUnauthorized = () => setIsAuthenticated(false);
+    window.addEventListener('unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('unauthorized', handleUnauthorized);
+  }, []);
+
+  // Пока не выяснили статус авторизации — не рендерим ничего
+  if (!authChecked) return null;
+
+  if (!isAuthenticated) {
+    return <AuthForm onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userEmail');
-    setToken(null);
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      setIsAuthenticated(false);
+    }
   };
 
   const refreshGraph = () => {
     setVersion((v) => v + 1);
   };
 
-  const handleNodeClick = async (id) => {
-    try {
-      const people = await fetchPeople();
-      const person = people.find((p) => p.id.toString() === id);
-      if (person) {
-        setSelectedPerson(person);
-        openEditModal();
-      }
-    } catch (e) {
-      if (e.response && e.response.status === 401) handleLogout();
-    }
+  const handleNodeClick = (person) => {
+    setSelectedPerson(person);
+    openEditModal();
   };
 
   return (
@@ -56,7 +67,6 @@ function App() {
         <Title order={2}>Генеалогическое древо</Title>
 
         <Group>
-          {/* Поиск */}
           <TextInput
             placeholder="Найти родственника..."
             leftSection={<IconSearch size={16} />}
@@ -64,8 +74,6 @@ function App() {
             onChange={(event) => setSearchQuery(event.currentTarget.value)}
             style={{ width: 250 }}
           />
-
-          {/* КНОПКУ ИМПОРТА УБРАЛИ */}
 
           <Button variant="light" onClick={openRelModal}>
             🔗 Связать
@@ -101,6 +109,7 @@ function App() {
       />
 
       <EditPersonModal
+        key={selectedPerson?.id ?? 0}
         opened={editModalOpened}
         onClose={closeEditModal}
         person={selectedPerson}

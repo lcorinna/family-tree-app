@@ -1,32 +1,41 @@
 import axios from 'axios';
 
-// Создаем экземпляр axios
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true, // отправлять httpOnly куку с каждым запросом
 });
 
-// --- ПЕРЕХВАТЧИК (INTERCEPTOR) ---
-// Перед отправкой любого запроса, этот код проверит, есть ли токен в "кармане" (localStorage)
-// И если есть, прикрепит его к заголовкам.
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+// При 401 — сообщаем приложению, что сессия истекла
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      window.dispatchEvent(new Event('unauthorized'));
+    }
+    return Promise.reject(error);
   }
-  return config;
-});
+);
 
 // --- API ФУНКЦИИ ---
 
 // Авторизация
 export const login = async (email, password) => {
   const response = await api.post('/login', { email, password });
-  return response.data; // Вернет { token: "...", email: "..." }
+  return response.data; // { email }
 };
 
 export const register = async (email, password) => {
   const response = await api.post('/register', { email, password });
   return response.data;
+};
+
+export const logout = async () => {
+  await api.post('/logout');
+};
+
+export const checkAuth = async () => {
+  const response = await api.get('/me');
+  return response.data; // { user_id, email }
 };
 
 // Люди
@@ -58,6 +67,11 @@ export const fetchRelationships = async () => {
 
 export const createRelationship = async (relationship) => {
   const response = await api.post('/relationships', relationship);
+  return response.data;
+};
+
+export const updateRelationship = async (id, description) => {
+  const response = await api.put(`/relationships/${id}`, { description });
   return response.data;
 };
 

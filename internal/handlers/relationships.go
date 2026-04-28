@@ -69,6 +69,36 @@ func GetAllRelationships(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(relationships)
 }
 
+// UpdateRelationship — обновляет описание связи
+func UpdateRelationship(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(auth.UserIDKey).(int)
+	idStr := chi.URLParam(r, "id")
+
+	var rel models.Relationship
+	if err := json.NewDecoder(r.Body).Decode(&rel); err != nil {
+		http.Error(w, "Неверный формат JSON", http.StatusBadRequest)
+		return
+	}
+
+	result, err := database.DB.Exec(
+		"UPDATE relationships SET description=? WHERE id=? AND user_id=?",
+		rel.Description, idStr, userID,
+	)
+	if err != nil {
+		http.Error(w, "Ошибка обновления: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "Связь не найдена или нет прав", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
 // DeleteRelationship
 func DeleteRelationship(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(auth.UserIDKey).(int)

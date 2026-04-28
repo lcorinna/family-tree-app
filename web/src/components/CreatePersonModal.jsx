@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Modal, TextInput, Select, Button, Group, Stack, Tooltip, Text } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -15,15 +15,21 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
     photo_url: '',
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const submittingRef = useRef(false);
 
   const handleChange = (field, value) => {
+    if (error) setError(null);
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const formatDate = (date) => (date ? dayjs(date).format('YYYY-MM-DD') : '');
 
   const handleSubmit = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
+    setError(null);
     try {
       await createPerson(formData);
       setFormData({
@@ -36,9 +42,10 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
       });
       onPersonCreated();
       onClose();
-    } catch (error) {
-      alert('Ошибка: ' + error.message);
+    } catch (err) {
+      setError(err.response?.data || err.message || 'Ошибка при создании');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
@@ -57,6 +64,11 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
   return (
     <Modal opened={opened} onClose={onClose} title="Новый родственник" centered>
       <Stack>
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
         <TextInput
           label="Имя"
           placeholder="Иван"

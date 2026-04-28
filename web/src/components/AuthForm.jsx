@@ -19,6 +19,7 @@ export function AuthForm({ onLoginSuccess }) {
   const [type, setType] = useState('login'); // 'login' или 'register'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
 
   const [form, setForm] = useState({
     email: '',
@@ -29,16 +30,15 @@ export function AuthForm({ onLoginSuccess }) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(null);
 
     try {
       if (type === 'login') {
-        const data = await login(form.email, form.password);
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('userEmail', data.email);
+        await login(form.email, form.password);
         onLoginSuccess();
       } else {
         await register(form.email, form.password);
-        alert('Регистрация успешна! Теперь войдите.');
+        setSuccess('Регистрация успешна! Теперь войдите.');
         setType('login');
       }
     } catch (err) {
@@ -72,6 +72,11 @@ export function AuthForm({ onLoginSuccess }) {
             {error && (
               <Text c="red" size="sm">
                 {error}
+              </Text>
+            )}
+            {success && (
+              <Text c="green" size="sm">
+                {success}
               </Text>
             )}
 
@@ -130,6 +135,7 @@ export function AuthForm({ onLoginSuccess }) {
             onClick={() => {
               setType(type === 'login' ? 'register' : 'login');
               setError(null);
+              setSuccess(null);
             }}
             size="sm"
           >
