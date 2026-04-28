@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Modal,
   TextInput,
@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
-import { IconTrash, IconInfoCircle } from '@tabler/icons-react';
+import { IconTrash, IconInfoCircle, IconCheck, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import {
   updatePerson,
@@ -22,52 +22,48 @@ import {
   fetchRelationships,
   fetchPeople,
   deleteRelationship,
+  updateRelationship,
 } from '../api';
 
 export function EditPersonModal({ opened, onClose, person, onUpdated }) {
-  const [formData, setFormData] = useState({
-    first_name: '',
-    middle_name: '',
-    last_name: '',
-    birth_date: '',
-    death_date: '',
-    gender: 'male',
-    photo_url: '',
-  });
+  const [formData, setFormData] = useState(() => ({
+    first_name: person?.first_name || '',
+    middle_name: person?.middle_name || '',
+    last_name: person?.last_name || '',
+    birth_date: person?.birth_date || '',
+    death_date: person?.death_date || '',
+    gender: person?.gender || 'male',
+    photo_url: person?.photo_url || '',
+  }));
 
   const [personRelationships, setPersonRelationships] = useState([]);
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
+  const [error, setError] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeleteRelId, setConfirmDeleteRelId] = useState(null);
+  const [editingRelId, setEditingRelId] = useState(null);
+  const [editingDescription, setEditingDescription] = useState('');
 
-  useEffect(() => {
-    if (person) {
-      setFormData({
-        first_name: person.first_name || '',
-        middle_name: person.middle_name || '',
-        last_name: person.last_name || '',
-        birth_date: person.birth_date || '',
-        death_date: person.death_date || '',
-        gender: person.gender || 'male',
-        photo_url: person.photo_url || '',
-      });
-      loadRelationships();
-    }
-  }, [person]);
+  const handleChange = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
 
-  const loadRelationships = async () => {
+  const loadRelationships = useCallback(async () => {
+    if (!person) return;
     try {
       const [allRels, allPeople] = await Promise.all([fetchRelationships(), fetchPeople()]);
       const myRels = allRels.filter(
         (r) => r.from_person_id === person.id || r.to_person_id === person.id
       );
-
       const enriched = myRels.map((rel) => {
         const isFromMe = rel.from_person_id === person.id;
         const otherId = isFromMe ? rel.to_person_id : rel.from_person_id;
         const otherPerson = allPeople.find((p) => p.id === otherId);
-
         return {
           id: rel.id,
           type: rel.type,
+          description: rel.description || '',
           otherName: otherPerson
             ? `${otherPerson.first_name} ${otherPerson.last_name}`
             : 'Неизвестный',
@@ -78,49 +74,79 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
     } catch (e) {
       console.error(e);
     }
+  }, [person]);
+
+  useEffect(() => {
+    loadRelationships();
+  }, [loadRelationships]);
+
+  const handleClose = () => {
+    setConfirmDelete(false);
+    setConfirmDeleteRelId(null);
+    setEditingRelId(null);
+    setError(null);
+    onClose();
+  };
+
+  const saveDescription = async (relId, description) => {
+    try {
+      await updateRelationship(relId, description);
+      setEditingRelId(null);
+      loadRelationships();
+    } catch (e) {
+      console.error(e);
+      setEditingRelId(null);
+    }
   };
 
   const formatDate = (date) => (date ? dayjs(date).format('YYYY-MM-DD') : '');
 
   const handleSave = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
+    setError(null);
     try {
       await updatePerson(person.id, formData);
       onUpdated();
-      onClose();
-    } catch (error) {
-      alert('Ошибка: ' + error.message);
+      handleClose();
+    } catch (err) {
+      setError(err.response?.data || err.message || 'Ошибка при сохранении');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
   const handleDeletePerson = async () => {
-    if (!window.confirm(`Удалить ${person.first_name}?`)) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
+    setError(null);
     try {
       await deletePerson(person.id);
       onUpdated();
-      onClose();
-    } catch (error) {
-      alert(error.message);
+      handleClose();
+    } catch (err) {
+      setError(err.response?.data || err.message || 'Ошибка при удалении');
+      setConfirmDelete(false);
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
   const handleDeleteRel = async (relId) => {
-    if (!window.confirm('Разорвать эту связь?')) return;
     try {
       await deleteRelationship(relId);
+      setConfirmDeleteRelId(null);
       loadRelationships();
       onUpdated();
-    } catch (e) {
-      alert(e.message);
+    } catch (err) {
+      setError(err.response?.data || err.message || 'Ошибка при удалении связи');
     }
   };
 
-  // Текст подсказки
   const photoTooltip = (
     <Text size="xs">
       Используйте <b>прямые ссылки</b> (на .jpg/.png).
@@ -134,12 +160,18 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
   return (
     <Modal
       opened={opened}
-      onClose={onClose}
+      onClose={handleClose}
       title={`Редактирование: ${formData.first_name}`}
       centered
       size="lg"
     >
       <Stack>
+        {error && (
+          <Text c="red" size="sm">
+            {error}
+          </Text>
+        )}
+
         <Group align="flex-start" grow>
           {/* ЛЕВАЯ КОЛОНКА */}
           <Stack>
@@ -158,23 +190,23 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
             <TextInput
               label="Имя"
               value={formData.first_name}
-              onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+              onChange={(e) => handleChange('first_name', e.target.value)}
             />
             <TextInput
               label="Фамилия"
               value={formData.last_name}
-              onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+              onChange={(e) => handleChange('last_name', e.target.value)}
             />
             <TextInput
               label="Отчество"
               value={formData.middle_name}
-              onChange={(e) => setFormData({ ...formData, middle_name: e.target.value })}
+              onChange={(e) => handleChange('middle_name', e.target.value)}
             />
 
             <Select
               label="Пол"
               value={formData.gender}
-              onChange={(val) => setFormData({ ...formData, gender: val })}
+              onChange={(val) => handleChange('gender', val)}
               data={[
                 { value: 'male', label: 'Мужской' },
                 { value: 'female', label: 'Женский' },
@@ -186,9 +218,9 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
                 valueFormat="DD.MM.YYYY"
                 label="Дата рождения"
                 placeholder="Выберите дату"
-                editable={false} // <--- ОТКЛЮЧИЛИ РУЧНОЙ ВВОД
+                editable={false}
                 value={formData.birth_date ? dayjs(formData.birth_date).toDate() : null}
-                onChange={(date) => setFormData({ ...formData, birth_date: formatDate(date) })}
+                onChange={(date) => handleChange('birth_date', formatDate(date))}
                 clearable
                 locale="ru"
               />
@@ -196,9 +228,9 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
                 valueFormat="DD.MM.YYYY"
                 label="Дата смерти"
                 placeholder="Выберите дату"
-                editable={false} // <--- ОТКЛЮЧИЛИ РУЧНОЙ ВВОД
+                editable={false}
                 value={formData.death_date ? dayjs(formData.death_date).toDate() : null}
-                onChange={(date) => setFormData({ ...formData, death_date: formatDate(date) })}
+                onChange={(date) => handleChange('death_date', formatDate(date))}
                 clearable
                 locale="ru"
               />
@@ -215,7 +247,7 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
               }
               placeholder="https://..."
               value={formData.photo_url}
-              onChange={(e) => setFormData({ ...formData, photo_url: e.target.value })}
+              onChange={(e) => handleChange('photo_url', e.target.value)}
             />
           </Stack>
 
@@ -243,19 +275,70 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
                     <Table.Tr key={rel.id}>
                       <Table.Td>{rel.otherName}</Table.Td>
                       <Table.Td>
-                        {rel.type}{' '}
-                        <Text span c="dimmed" size="xs">
-                          {rel.direction}
-                        </Text>
+                        <Stack gap={2}>
+                          <span>
+                            {rel.type}{' '}
+                            <Text span c="dimmed" size="xs">
+                              {rel.direction}
+                            </Text>
+                          </span>
+                          {editingRelId === rel.id ? (
+                            <TextInput
+                              size="xs"
+                              value={editingDescription}
+                              autoFocus
+                              onChange={(e) => setEditingDescription(e.target.value)}
+                              onBlur={() => saveDescription(rel.id, editingDescription)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveDescription(rel.id, editingDescription);
+                                if (e.key === 'Escape') setEditingRelId(null);
+                              }}
+                            />
+                          ) : (
+                            <Text
+                              size="xs"
+                              c={rel.description ? 'dimmed' : 'blue'}
+                              style={{
+                                cursor: 'pointer',
+                                fontStyle: rel.description ? 'normal' : 'italic',
+                              }}
+                              onClick={() => {
+                                setEditingRelId(rel.id);
+                                setEditingDescription(rel.description);
+                              }}
+                            >
+                              {rel.description || 'добавить описание...'}
+                            </Text>
+                          )}
+                        </Stack>
                       </Table.Td>
                       <Table.Td>
-                        <ActionIcon
-                          color="red"
-                          variant="subtle"
-                          onClick={() => handleDeleteRel(rel.id)}
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
+                        {confirmDeleteRelId === rel.id ? (
+                          <Group gap={4}>
+                            <ActionIcon
+                              color="red"
+                              size="sm"
+                              onClick={() => handleDeleteRel(rel.id)}
+                            >
+                              <IconCheck size={14} />
+                            </ActionIcon>
+                            <ActionIcon
+                              variant="subtle"
+                              size="sm"
+                              onClick={() => setConfirmDeleteRelId(null)}
+                            >
+                              <IconX size={14} />
+                            </ActionIcon>
+                          </Group>
+                        ) : (
+                          <ActionIcon
+                            color="red"
+                            variant="subtle"
+                            onClick={() => setConfirmDeleteRelId(rel.id)}
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        )}
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -266,11 +349,30 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
         </Group>
 
         <Group justify="space-between" mt="md">
-          <Button color="red" variant="outline" onClick={handleDeletePerson} loading={loading}>
-            Удалить карточку
-          </Button>
+          {confirmDelete ? (
+            <Group gap="xs">
+              <Text size="sm" c="red">
+                Удалить {formData.first_name}? Это нельзя отменить.
+              </Text>
+              <Button size="xs" color="red" onClick={handleDeletePerson} loading={loading}>
+                Да, удалить
+              </Button>
+              <Button size="xs" variant="default" onClick={() => setConfirmDelete(false)}>
+                Отмена
+              </Button>
+            </Group>
+          ) : (
+            <Button
+              color="red"
+              variant="outline"
+              onClick={() => setConfirmDelete(true)}
+              loading={loading}
+            >
+              Удалить карточку
+            </Button>
+          )}
           <Group>
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" onClick={handleClose}>
               Закрыть
             </Button>
             <Button onClick={handleSave} loading={loading}>

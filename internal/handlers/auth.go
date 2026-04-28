@@ -19,15 +19,9 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// РАНЬШЕ: Хешировали пароль
-	// hash, err := auth.HashPassword(creds.Password)
-	
-	// ТЕПЕРЬ: Просто берем пароль как есть чтобы легче дебажить и тестировать.
-	plainPassword := creds.Password
-
-	// Сохраняем пользователя (пишем пароль прямо в колонку password_hash)
+	// Пароль хранится в открытом виде (тестовое приложение)
 	query := `INSERT INTO users (email, password_hash) VALUES (?, ?)`
-	_, err := database.DB.Exec(query, creds.Email, plainPassword)
+	_, err := database.DB.Exec(query, creds.Email, creds.Password)
 	if err != nil {
 		http.Error(w, "Пользователь с таким email уже существует", http.StatusConflict)
 		return
@@ -44,36 +38,70 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Ищем пользователя по email
-	var storedPassword string // Тут теперь лежит обычный пароль, не хеш
+	var storedPassword string
 	var userID int
-	
-	// Мы не меняли название колонки в БД, она все еще называется password_hash, 
-	// но хранить там будем обычный текст.
-	err := database.DB.QueryRow("SELECT id, password_hash FROM users WHERE email = ?", creds.Email).Scan(&userID, &storedPassword)
+	err := database.DB.QueryRow(
+		"SELECT id, password_hash FROM users WHERE email = ?", creds.Email,
+	).Scan(&userID, &storedPassword)
 	if err != nil {
 		http.Error(w, "Неверный email или пароль", http.StatusUnauthorized)
 		return
 	}
 
-	// 2. Проверяем пароль (ПРОСТОЕ СРАВНЕНИЕ СТРОК)
-	// РАНЬШЕ: if !auth.CheckPasswordHash(creds.Password, storedHash)
-	
 	if creds.Password != storedPassword {
 		http.Error(w, "Неверный email или пароль", http.StatusUnauthorized)
 		return
 	}
 
-	// 3. Генерируем токен
 	token, err := auth.GenerateToken(userID)
 	if err != nil {
 		http.Error(w, "Ошибка создания токена", http.StatusInternalServerError)
 		return
 	}
 
-	// 4. Отдаем токен
-	json.NewEncoder(w).Encode(map[string]string{
-		"token": token, 
-		"email": creds.Email,
+	// Токен — в httpOnly куке: JavaScript не может его прочитать
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    token,
+		HttpOnly: true,
+		Path:     "/",
+		MaxAge:   86400, // 24 часа
+		SameSite: http.SameSiteLaxMode,
+		// Secure: true — раскомментировать при деплое на HTTPS
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"email": creds.Email})
+}
+
+func Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "token",
+		Value:    "",
+		HttpOnly: true,
+		Path:     "/",
+		MaxAge:   -1,
+		SameSite: http.SameSiteLaxMode,
+	})
+	w.WriteHeader(http.StatusOK)
+}
+
+// Me — проверка авторизации и получение данных текущего пользователя.
+// Дополнительно делает запрос в БД, поэтому невалидный user_id (удалённая БД) вернёт 401.
+func Me(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(auth.UserIDKey).(int)
+
+	var email string
+	err := database.DB.QueryRow("SELECT email FROM users WHERE id = ?", userID).Scan(&email)
+	if err != nil {
+		// Токен валиден, но пользователь не найден в БД (например, БД была удалена)
+		http.Error(w, "Пользователь не найден", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user_id": userID,
+		"email":   email,
 	})
 }

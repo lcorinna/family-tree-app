@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import ReactFlow, {
   Controls,
   Background,
+  MiniMap,
   useNodesState,
   useEdgesState,
   ConnectionLineType,
@@ -15,9 +16,13 @@ import { Button } from '@mantine/core';
 import { IconDownload, IconX, IconLayoutDashboard } from '@tabler/icons-react';
 import 'reactflow/dist/style.css';
 import { fetchPeople, fetchRelationships, saveNodePosition } from '../api';
+import { isVerticalType, isSpouseType, isSiblingType } from '../utils/relationshipTypes';
+import { PersonNode } from './PersonNode';
 
 const nodeWidth = 200;
 const nodeHeight = 120;
+
+const NODE_TYPES = { person: PersonNode };
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
@@ -89,16 +94,7 @@ const getLayoutedPositions = (nodes, edges, direction = 'TB') => {
   });
 
   edges.forEach((edge) => {
-    const type = edge.data?.originalType?.toLowerCase() || '';
-    const isVertical =
-      type === 'parent' ||
-      type === 'child' ||
-      type === 'родитель' ||
-      type === 'ребенок' ||
-      type === 'отец' ||
-      type === 'мать';
-
-    if (isVertical) {
+    if (isVerticalType(edge.data?.originalType || '')) {
       dagreGraph.setEdge(edge.source, edge.target);
     }
   });
@@ -127,6 +123,8 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
 
   const [rawData, setRawData] = useState({ people: [], rels: [] });
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  // Кэш позиций на сессию: не пересчитываем dagre при каждом клике
+  const nodePositions = useRef({});
 
   // 1. Загрузка данных
   useEffect(() => {
@@ -141,125 +139,66 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
     loadData();
   }, [refreshTrigger]);
 
-  // 2. Расчет графа и обновление стейта
+  // 2. Пересчёт позиций — только при изменении данных, НЕ при клике
   useEffect(() => {
     const { people, rels } = rawData;
     if (people.length === 0) return;
 
-    // --- ГЕНЕРАЦИЯ УЗЛОВ (ПОКА БЕЗ КООРДИНАТ) ---
-    let tempNodes = people.map((person) => {
+    const nodesForLayout = people.map((p) => ({ id: p.id.toString() }));
+    const edgesForLayout = rels.map((r) => ({
+      source: r.from_person_id.toString(),
+      target: r.to_person_id.toString(),
+      data: { originalType: r.type },
+    }));
+    const ideal = getLayoutedPositions(nodesForLayout, edgesForLayout);
+
+    people.forEach((person) => {
+      const id = person.id.toString();
+      const hasSaved = person.position_x !== 0 || person.position_y !== 0;
+      if (hasSaved) {
+        // Позиция из БД всегда приоритетнее
+        nodePositions.current[id] = { x: person.position_x, y: person.position_y };
+      } else if (!nodePositions.current[id] && ideal[id]) {
+        // Новый узел без позиции: берём dagre и кэшируем (больше не двигаем)
+        nodePositions.current[id] = ideal[id];
+      }
+    });
+  }, [rawData]);
+
+  // 3. Обновление визуального состояния — запускается и при смене выделения/поиска
+  useEffect(() => {
+    const { people, rels } = rawData;
+    if (people.length === 0) return;
+
+    const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
+
+    const finalNodes = people.map((person) => {
+      const id = person.id.toString();
       const age = calculateAge(person.birth_date, person.death_date);
       const ageString = getAgeString(age);
-      const isDead = !!person.death_date;
-      const genderColor = person.gender === 'male' ? '#228be6' : '#e64980';
-
       const fullName =
         `${person.first_name} ${person.last_name} ${person.middle_name || ''}`.toLowerCase();
-      const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
-      const isMatch = searchQuery && fullName.includes(searchLower);
-      const isDimmed = searchQuery && !isMatch;
-      const isSelected = selectedNodeId === person.id.toString();
-
-      // Проверяем, есть ли сохраненные координаты в БД
-      const hasSavedPosition = person.position_x !== 0 || person.position_y !== 0;
+      const isMatch = !!searchQuery && fullName.includes(searchLower);
+      const isDimmed = !!searchQuery && !isMatch;
+      const isSelected = selectedNodeId === id;
 
       return {
-        id: person.id.toString(),
-        data: {
-          hasSavedPosition, // Флаг для логики
-          label: (
-            <div
-              style={{
-                width: 190,
-                background: 'white',
-                borderRadius: 8,
-                overflow: 'hidden',
-                boxShadow: isSelected
-                  ? '0 0 0 3px #228be6'
-                  : isMatch
-                    ? '0 0 15px #fcc419'
-                    : '0 4px 10px rgba(0,0,0,0.1)',
-                border: isSelected
-                  ? '2px solid #228be6'
-                  : isMatch
-                    ? '2px solid #fcc419'
-                    : '1px solid #eee',
-                display: 'flex',
-                flexDirection: 'row',
-                textAlign: 'left',
-                position: 'relative',
-                opacity: isDimmed ? 0.3 : 1,
-                transition: 'all 0.3s ease',
-              }}
-            >
-              <div style={{ width: 6, background: genderColor, flexShrink: 0 }}></div>
-              <div
-                style={{
-                  padding: 10,
-                  display: 'flex',
-                  gap: 10,
-                  alignItems: 'center',
-                  width: '100%',
-                }}
-              >
-                <div style={{ position: 'relative' }}>
-                  <img
-                    src={person.photo_url || `https://placehold.co/60?text=${person.first_name[0]}`}
-                    alt="avatar"
-                    style={{
-                      width: 50,
-                      height: 50,
-                      borderRadius: '50%',
-                      objectFit: 'cover',
-                      border: `2px solid ${genderColor}`,
-                      filter: isDead ? 'grayscale(100%)' : 'none',
-                    }}
-                    crossOrigin="anonymous"
-                  />
-                  {isDead && (
-                    <div style={{ position: 'absolute', bottom: -5, right: -5, fontSize: 12 }}>
-                      ⚫
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <strong
-                    style={{
-                      fontSize: 14,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {person.first_name}
-                  </strong>
-                  <strong style={{ fontSize: 12 }}>{person.last_name}</strong>
-                  <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
-                    {age !== null ? ageString : ''}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ),
-        },
-        // Сразу ставим сохраненные координаты, если есть. Если нет - 0,0 (поправим ниже)
-        position: hasSavedPosition
-          ? { x: person.position_x, y: person.position_y }
-          : { x: 0, y: 0 },
+        id,
+        type: 'person',
+        data: { person, age, ageString, isDimmed, isMatch, isSelected },
+        position: nodePositions.current[id] || { x: 0, y: 0 },
         zIndex: isMatch || isSelected ? 10 : 1,
       };
     });
 
-    // --- ГЕНЕРАЦИЯ СВЯЗЕЙ ---
     const newEdges = rels.map((rel) => {
-      const typeLower = rel.type.toLowerCase();
       const fromId = rel.from_person_id.toString();
       const toId = rel.to_person_id.toString();
       const isConnectedToSelected =
         selectedNodeId && (fromId === selectedNodeId || toId === selectedNodeId);
 
       let opacity = 1;
-      let label = '';
+      let label = rel.type; // всегда показываем тип на линии
       let zIndex = 1;
       let strokeWidth = 2;
 
@@ -270,27 +209,17 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
           strokeWidth = 3;
           const fromPerson = people.find((p) => p.id === rel.from_person_id);
           const toPerson = people.find((p) => p.id === rel.to_person_id);
-          label = getRelativeLabel(fromPerson, toPerson, selectedNodeId, rel.type);
+          // для стандартных типов — умная метка с точки зрения выбранного человека,
+          // для кастомных — оставляем сырой тип
+          const directionLabel = getRelativeLabel(fromPerson, toPerson, selectedNodeId, rel.type);
+          label = directionLabel || rel.type;
         } else {
           opacity = 0.1;
-          label = '';
         }
-      } else {
-        opacity = 1;
-        label = '';
       }
 
-      const isSpouse =
-        typeLower === 'spouse' ||
-        typeLower === 'супруг' ||
-        typeLower === 'жена' ||
-        typeLower === 'муж';
-      const isSibling =
-        typeLower === 'sibling' ||
-        typeLower === 'brother' ||
-        typeLower === 'sister' ||
-        typeLower === 'брат' ||
-        typeLower === 'сестра';
+      const isSpouse = isSpouseType(rel.type);
+      const isSibling = isSiblingType(rel.type);
 
       let strokeColor = '#555';
       let strokeDasharray = '0';
@@ -310,39 +239,18 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
         id: `e${rel.id}`,
         source: fromId,
         target: toId,
-        label: label,
+        label,
         type: 'smoothstep',
         animated: false,
         data: { originalType: rel.type },
-        style: {
-          stroke: strokeColor,
-          strokeWidth: strokeWidth,
-          strokeDasharray: strokeDasharray,
-          opacity: opacity,
-        },
-        zIndex: zIndex,
+        style: { stroke: strokeColor, strokeWidth, strokeDasharray, opacity },
+        zIndex,
         labelStyle: { fill: strokeColor, fontWeight: 700, fontSize: 12 },
         labelBgStyle: { fill: 'rgba(255, 255, 255, 0.8)' },
         markerEnd: showArrow
           ? { type: MarkerType.ArrowClosed, width: 20, height: 20, color: strokeColor }
           : undefined,
       };
-    });
-
-    // --- ПРИМЕНЕНИЕ КООРДИНАТ ---
-    // Рассчитываем идеальные позиции (Dagre) для ВСЕХ, чтобы знать, куда ставить новичков
-    const idealPositions = getLayoutedPositions(tempNodes, newEdges);
-
-    // Проходим по узлам и решаем: берем из БД или из Dagre
-    const finalNodes = tempNodes.map((node) => {
-      if (node.data.hasSavedPosition) {
-        return node; // Оставляем как есть (из БД)
-      }
-      // Если координат нет, берем из Dagre
-      if (idealPositions[node.id]) {
-        node.position = idealPositions[node.id];
-      }
-      return node;
     });
 
     setNodes(finalNodes);
@@ -362,28 +270,26 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
   };
 
   const handleEditClick = () => {
-    if (selectedNodeId) onPersonClick(selectedNodeId);
+    if (!selectedNodeId) return;
+    const person = rawData.people.find((p) => p.id.toString() === selectedNodeId);
+    if (person) onPersonClick(person);
   };
 
-  // ОБРАБОТЧИК: Сохраняем позицию, когда пользователь отпустил карточку
   const onNodeDragStop = useCallback((event, node) => {
+    nodePositions.current[node.id] = node.position;
     saveNodePosition(node.id, node.position.x, node.position.y);
   }, []);
 
-  // КНОПКА: Принудительный сброс на авто-раскладку
   const resetLayout = () => {
     const idealPositions = getLayoutedPositions(nodes, edges);
     const updatedNodes = nodes.map((node) => {
-      if (idealPositions[node.id]) {
-        const newPos = idealPositions[node.id];
-        // Обновляем визуально
-        node.position = newPos;
-        // Сохраняем в базу новую красивую позицию
-        saveNodePosition(node.id, newPos.x, newPos.y);
-      }
-      return node;
+      if (!idealPositions[node.id]) return node;
+      const newPos = idealPositions[node.id];
+      nodePositions.current[node.id] = newPos;
+      saveNodePosition(node.id, newPos.x, newPos.y);
+      return { ...node, position: newPos };
     });
-    setNodes([...updatedNodes]); // Создаем копию массива для ререндера
+    setNodes([...updatedNodes]);
   };
 
   const downloadImage = () => {
@@ -432,11 +338,19 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
         fitView
         onNodeClick={handleNodeClick}
         onPaneClick={onPaneClick}
-        onNodeDragStop={onNodeDragStop} // <--- ВАЖНО: сохранение
+        onNodeDragStop={onNodeDragStop}
+        nodeTypes={NODE_TYPES}
         minZoom={0.2}
       >
         <Background color="#ccc" gap={20} size={1} />
         <Controls />
+        <MiniMap
+          nodeColor={(node) => node.data?.person?.gender === 'male' ? '#228be6' : '#e64980'}
+          maskColor="rgba(0,0,0,0.05)"
+          style={{ background: '#f8f9fa', border: '1px solid #ddd' }}
+          zoomable
+          pannable
+        />
 
         <Panel position="top-right" style={{ display: 'flex', gap: 10 }}>
           {/* Кнопка сброса */}

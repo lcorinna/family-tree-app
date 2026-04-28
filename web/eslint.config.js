@@ -21,6 +21,9 @@ export default [
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Правило слишком агрессивно: флагует любой вызов async-функции из эффекта,
+      // даже если setState вызывается внутри await (что является стандартным паттерном).
+      'react-hooks/set-state-in-effect': 'off',
       // Пользовательские правила
       'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]' }],
     },
