@@ -5,18 +5,19 @@ import ReactFlow, {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   ConnectionLineType,
   Panel,
   MarkerType,
 } from 'reactflow';
 import dagre from 'dagre';
-import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
 import { Button } from '@mantine/core';
 import { IconDownload, IconX, IconLayoutDashboard } from '@tabler/icons-react';
 import 'reactflow/dist/style.css';
 import { fetchPeople, fetchRelationships, saveNodePosition } from '../api';
-import { isVerticalType, isSpouseType, isSiblingType } from '../utils/relationshipTypes';
+import { isVerticalType, isSpouseType, isSiblingType, isParentType, isChildType, isGrandparentType } from '../utils/relationshipTypes';
 import { PersonNode } from './PersonNode';
 
 const nodeWidth = 200;
@@ -114,6 +115,87 @@ const getLayoutedPositions = (nodes, edges, direction = 'TB') => {
 
   return positions;
 };
+
+// Отдельный компонент, чтобы использовать useReactFlow внутри контекста ReactFlow
+function DownloadPdfButton({ onBeforeDownload }) {
+  const { fitView } = useReactFlow();
+
+  const handleDownload = async () => {
+    onBeforeDownload();
+
+    // Вписываем всё дерево в экран перед снятием скриншота
+    fitView({ padding: 0.06, duration: 0 });
+
+    // Ждём два кадра — браузер должен отрисовать новый viewport
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    const container = document.querySelector('.react-flow');
+    if (!container) return;
+
+    // html-to-image сам подтягивает внешние картинки, но нам нужна защита от CORS.
+    // Конвертируем img.src в data URL заранее.
+    const imgs = Array.from(container.querySelectorAll('img'));
+    const origSrcs = imgs.map((img) => img.src);
+
+    await Promise.all(
+      imgs.map(async (img) => {
+        if (img.src.startsWith('data:')) return;
+        try {
+          const res = await fetch(img.src, { mode: 'cors' });
+          const blob = await res.blob();
+          const dataUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+          img.src = dataUrl;
+          if (!img.complete) await new Promise((resolve) => { img.onload = resolve; });
+        } catch { /* оставляем как есть */ }
+      })
+    );
+
+    try {
+      // toPng нативно поддерживает SVG-рёбра React Flow, в отличие от html2canvas
+      const dataUrl = await toPng(container, {
+        backgroundColor: '#f8f9fa',
+        pixelRatio: 2,
+        filter: (el) =>
+          !el.classList?.contains('react-flow__controls') &&
+          !el.classList?.contains('react-flow__panel') &&
+          !el.classList?.contains('react-flow__minimap'),
+      });
+
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve) => { img.onload = resolve; });
+
+      const pdf = new jsPDF({
+        orientation: img.width > img.height ? 'l' : 'p',
+        unit: 'px',
+        format: [img.width, img.height],
+      });
+      pdf.addImage(dataUrl, 'PNG', 0, 0, img.width, img.height);
+      pdf.save('family-tree.pdf');
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      alert('Не удалось создать PDF. Попробуйте ещё раз.');
+    } finally {
+      imgs.forEach((img, i) => { img.src = origSrcs[i]; });
+    }
+  };
+
+  return (
+    <Button
+      leftSection={<IconDownload size={16} />}
+      onClick={handleDownload}
+      variant="white"
+      color="black"
+      style={{ boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}
+    >
+      Скачать PDF
+    </Button>
+  );
+}
 
 // --- КОМПОНЕНТ ---
 
@@ -220,6 +302,8 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
 
       const isSpouse = isSpouseType(rel.type);
       const isSibling = isSiblingType(rel.type);
+      const isParent = isParentType(rel.type) || isChildType(rel.type);
+      const isGrandparent = isGrandparentType(rel.type);
 
       let strokeColor = '#555';
       let strokeDasharray = '0';
@@ -231,8 +315,14 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
         showArrow = false;
       } else if (isSibling) {
         strokeColor = '#228be6';
-        strokeDasharray = '0';
+        strokeDasharray = '5 5';
         showArrow = false;
+      } else if (isParent) {
+        strokeColor = '#2f9e44';
+        strokeDasharray = '5 5';
+      } else if (isGrandparent) {
+        strokeColor = '#1a5c27';
+        strokeDasharray = '5 5';
       }
 
       return {
@@ -253,8 +343,65 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
       };
     });
 
+    // Вычисляем автоматические рёбра братьев/сестёр на основе общих родителей
+    const parentToChildren = new Map();
+    rels.forEach((rel) => {
+      if (isParentType(rel.type)) {
+        const pid = rel.from_person_id.toString();
+        const cid = rel.to_person_id.toString();
+        if (!parentToChildren.has(pid)) parentToChildren.set(pid, new Set());
+        parentToChildren.get(pid).add(cid);
+      } else if (isChildType(rel.type)) {
+        const pid = rel.to_person_id.toString();
+        const cid = rel.from_person_id.toString();
+        if (!parentToChildren.has(pid)) parentToChildren.set(pid, new Set());
+        parentToChildren.get(pid).add(cid);
+      }
+    });
+
+    // Все пары с явной связью — не рисуем автосиблинг поверх них,
+    // чтобы не скрывать уже существующие рёбра (супруг, родитель и т.д.)
+    const addedPairs = new Set();
+    rels.forEach((rel) => {
+      const key = [rel.from_person_id.toString(), rel.to_person_id.toString()].sort().join('-');
+      addedPairs.add(key);
+    });
+
+    const autoSiblingEdges = [];
+    parentToChildren.forEach((children) => {
+      const childArr = Array.from(children);
+      for (let i = 0; i < childArr.length; i++) {
+        for (let j = i + 1; j < childArr.length; j++) {
+          const sorted = [childArr[i], childArr[j]].sort();
+          const key = sorted.join('-');
+          if (addedPairs.has(key)) continue;
+          addedPairs.add(key);
+
+          const [a, b] = sorted;
+          const isConnected = selectedNodeId && (a === selectedNodeId || b === selectedNodeId);
+          const opacity = selectedNodeId ? (isConnected ? 1 : 0.1) : 1;
+
+          autoSiblingEdges.push({
+            id: `auto-sib-${a}-${b}`,
+            source: a,
+            target: b,
+            label: 'Брат/Сестра',
+            type: 'smoothstep',
+            animated: false,
+            data: { originalType: 'sibling', isAutoSibling: true },
+            style: { stroke: '#228be6', strokeWidth: isConnected ? 3 : 2, strokeDasharray: '5 5', opacity },
+            labelStyle: { fill: '#228be6', fontWeight: 700, fontSize: 12 },
+            labelBgStyle: { fill: 'rgba(255, 255, 255, 0.8)' },
+            zIndex: isConnected ? 10 : 1,
+            markerEnd: undefined,
+          });
+        }
+      }
+    });
+
     setNodes(finalNodes);
-    setEdges(newEdges);
+    // autoSiblingEdges — первыми, чтобы явные рёбра рендерились поверх
+    setEdges([...autoSiblingEdges, ...newEdges]);
   }, [rawData, searchQuery, selectedNodeId, setNodes, setEdges]);
 
   const handleNodeClick = (event, node) => {
@@ -290,33 +437,6 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
       return { ...node, position: newPos };
     });
     setNodes([...updatedNodes]);
-  };
-
-  const downloadImage = () => {
-    setSelectedNodeId(null);
-
-    setTimeout(() => {
-      const viewport = document.querySelector('.react-flow__viewport');
-      if (!viewport) return;
-      html2canvas(viewport, {
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#f8f9fa',
-        scale: 2,
-        ignoreElements: (el) =>
-          el.classList.contains('react-flow__controls') ||
-          el.classList.contains('react-flow__panel'),
-      }).then((canvas) => {
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF({
-          orientation: canvas.width > canvas.height ? 'l' : 'p',
-          unit: 'px',
-          format: [canvas.width, canvas.height],
-        });
-        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-        pdf.save('family-tree.pdf');
-      });
-    }, 100);
   };
 
   return (
@@ -385,15 +505,7 @@ export function FamilyGraph({ refreshTrigger, onPersonClick, searchQuery }) {
             </Button>
           )}
 
-          <Button
-            leftSection={<IconDownload size={16} />}
-            onClick={downloadImage}
-            variant="white"
-            color="black"
-            style={{ boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}
-          >
-            Скачать PDF
-          </Button>
+          <DownloadPdfButton onBeforeDownload={() => setSelectedNodeId(null)} />
         </Panel>
       </ReactFlow>
     </div>

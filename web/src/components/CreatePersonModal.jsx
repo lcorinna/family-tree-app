@@ -1,6 +1,5 @@
 import React, { useState, useRef } from 'react';
 import { Modal, TextInput, Select, Button, Group, Stack, Tooltip, Text } from '@mantine/core';
-import { DateInput } from '@mantine/dates';
 import { IconInfoCircle } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { createPerson } from '../api';
@@ -16,6 +15,7 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [birthDateText, setBirthDateText] = useState('');
   const submittingRef = useRef(false);
 
   const handleChange = (field, value) => {
@@ -25,7 +25,35 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
 
   const formatDate = (date) => (date ? dayjs(date).format('YYYY-MM-DD') : '');
 
+  const parseDateInput = (value) => {
+    if (!value) return undefined;
+    const m = value.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (m) {
+      const d = new Date(+m[3], +m[2] - 1, +m[1]);
+      if (!isNaN(d.getTime()) && d.getFullYear() === +m[3]) return d;
+    }
+    return undefined;
+  };
+
+  const applyDateMask = (raw) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 8);
+    if (digits.length > 4) return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+    if (digits.length > 2) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+    return digits;
+  };
+
+  const handleBirthDateChange = (raw) => {
+    const masked = applyDateMask(raw);
+    setBirthDateText(masked);
+    const parsed = parseDateInput(masked);
+    handleChange('birth_date', parsed ? formatDate(parsed) : '');
+  };
+
   const handleSubmit = async () => {
+    if (!formData.first_name.trim()) {
+      setError('Укажите имя');
+      return;
+    }
     if (submittingRef.current) return;
     submittingRef.current = true;
     setLoading(true);
@@ -40,6 +68,7 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
         gender: 'male',
         photo_url: '',
       });
+      setBirthDateText('');
       onPersonCreated();
       onClose();
     } catch (err) {
@@ -100,15 +129,12 @@ export function CreatePersonModal({ opened, onClose, onPersonCreated }) {
           ]}
         />
 
-        <DateInput
-          valueFormat="DD.MM.YYYY"
+        <TextInput
           label="Дата рождения"
-          placeholder="Выберите дату"
-          editable={false} // <--- ОТКЛЮЧИЛИ РУЧНОЙ ВВОД
-          value={formData.birth_date ? dayjs(formData.birth_date).toDate() : null}
-          onChange={(date) => handleChange('birth_date', formatDate(date))}
-          clearable
-          locale="ru"
+          placeholder="26.06.1995"
+          value={birthDateText}
+          onChange={(e) => handleBirthDateChange(e.target.value)}
+          maxLength={10}
         />
 
         <TextInput

@@ -13,7 +13,6 @@ import {
   Divider,
   Tooltip,
 } from '@mantine/core';
-import { DateInput } from '@mantine/dates';
 import { IconTrash, IconInfoCircle, IconCheck, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import {
@@ -35,6 +34,10 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
     gender: person?.gender || 'male',
     photo_url: person?.photo_url || '',
   }));
+
+  const toDisplayDate = (iso) => (iso ? dayjs(iso).format('DD.MM.YYYY') : '');
+  const [birthDateText, setBirthDateText] = useState(() => toDisplayDate(person?.birth_date));
+  const [deathDateText, setDeathDateText] = useState(() => toDisplayDate(person?.death_date));
 
   const [personRelationships, setPersonRelationships] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -100,6 +103,35 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
   };
 
   const formatDate = (date) => (date ? dayjs(date).format('YYYY-MM-DD') : '');
+
+  const parseDateInput = (value) => {
+    if (!value) return undefined;
+    const m = value.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (m) {
+      const d = new Date(+m[3], +m[2] - 1, +m[1]);
+      if (!isNaN(d.getTime()) && d.getFullYear() === +m[3]) return d;
+    }
+    return undefined;
+  };
+
+  const applyDateMask = (raw) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 8);
+    if (digits.length > 4) return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+    if (digits.length > 2) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+    return digits;
+  };
+
+  const handleDateChange = (raw, field, setTextFn) => {
+    const masked = applyDateMask(raw);
+    setTextFn(masked);
+    const parsed = parseDateInput(masked);
+    handleChange(field, parsed ? formatDate(parsed) : '');
+  };
+
+  useEffect(() => {
+    setBirthDateText(toDisplayDate(person?.birth_date));
+    setDeathDateText(toDisplayDate(person?.death_date));
+  }, [person]);
 
   const handleSave = async () => {
     if (submittingRef.current) return;
@@ -214,25 +246,19 @@ export function EditPersonModal({ opened, onClose, person, onUpdated }) {
             />
 
             <Group grow>
-              <DateInput
-                valueFormat="DD.MM.YYYY"
+              <TextInput
                 label="Дата рождения"
-                placeholder="Выберите дату"
-                editable={false}
-                value={formData.birth_date ? dayjs(formData.birth_date).toDate() : null}
-                onChange={(date) => handleChange('birth_date', formatDate(date))}
-                clearable
-                locale="ru"
+                placeholder="26.06.1995"
+                value={birthDateText}
+                onChange={(e) => handleDateChange(e.target.value, 'birth_date', setBirthDateText)}
+                maxLength={10}
               />
-              <DateInput
-                valueFormat="DD.MM.YYYY"
+              <TextInput
                 label="Дата смерти"
-                placeholder="Выберите дату"
-                editable={false}
-                value={formData.death_date ? dayjs(formData.death_date).toDate() : null}
-                onChange={(date) => handleChange('death_date', formatDate(date))}
-                clearable
-                locale="ru"
+                placeholder="26.06.1995"
+                value={deathDateText}
+                onChange={(e) => handleDateChange(e.target.value, 'death_date', setDeathDateText)}
+                maxLength={10}
               />
             </Group>
 

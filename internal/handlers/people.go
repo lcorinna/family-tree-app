@@ -6,6 +6,7 @@ import (
 	"family-tree-app/internal/database"
 	"family-tree-app/internal/models"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -29,6 +30,11 @@ func CreatePerson(w http.ResponseWriter, r *http.Request) {
 	var p models.Person
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, "Неверный формат JSON", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(p.FirstName) == "" {
+		http.Error(w, "Имя обязательно", http.StatusBadRequest)
 		return
 	}
 

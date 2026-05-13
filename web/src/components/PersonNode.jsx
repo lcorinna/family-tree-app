@@ -1,6 +1,22 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
 
+function getAvatarEmoji(gender, age) {
+  const male = gender === 'male';
+  if (age === null || age === undefined) return male ? '🧑' : '👩';
+  if (age <= 2) return '👶';
+  if (age <= 17) return male ? '🧒' : '👧';
+  if (age <= 64) return male ? '🧑' : '👩';
+  return male ? '👴' : '👵';
+}
+
+function getAvatarSrc(gender, age) {
+  const emoji = getAvatarEmoji(gender, age);
+  const bg = gender === 'male' ? '%23dbeafe' : '%23fce7f3';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><circle cx="30" cy="30" r="30" fill="${bg}"/><text x="30" y="42" text-anchor="middle" font-size="30">${emoji}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 export function PersonNode({ data }) {
   const { person, isDimmed, isMatch, isSelected, age, ageString } = data;
   const genderColor = person.gender === 'male' ? '#228be6' : '#e64980';
@@ -48,7 +64,7 @@ export function PersonNode({ data }) {
         >
           <div style={{ position: 'relative' }}>
             <img
-              src={person.photo_url || `https://placehold.co/60?text=${person.first_name[0]}`}
+              src={person.photo_url || getAvatarSrc(person.gender, age)}
               alt="avatar"
               style={{
                 width: 50,
@@ -58,7 +74,7 @@ export function PersonNode({ data }) {
                 border: `2px solid ${genderColor}`,
                 filter: isDead ? 'grayscale(100%)' : 'none',
               }}
-              crossOrigin="anonymous"
+              crossOrigin={person.photo_url ? 'anonymous' : undefined}
             />
             {isDead && (
               <div style={{ position: 'absolute', bottom: -5, right: -5, fontSize: 12 }}>⚫</div>

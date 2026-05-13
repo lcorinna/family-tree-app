@@ -18,4 +18,12 @@ export const isSiblingType = (type) => {
   return t === 'sibling' || t === 'brother' || t === 'sister' || t === 'брат' || t === 'сестра';
 };
 
+export const isGrandparentType = (type) => {
+  const t = type.toLowerCase();
+  return (
+    t === 'grandparent' || t === 'grandfather' || t === 'grandmother' ||
+    t === 'бабушка' || t === 'дедушка'
+  );
+};
+
 export const isVerticalType = (type) => isParentType(type) || isChildType(type);

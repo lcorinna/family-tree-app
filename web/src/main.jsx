@@ -13,9 +13,7 @@ import App from './App';
 dayjs.locale('ru');
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <MantineProvider>
-      <App />
-    </MantineProvider>
-  </React.StrictMode>
+  <MantineProvider>
+    <App />
+  </MantineProvider>
 );
